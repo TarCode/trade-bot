@@ -10,47 +10,100 @@ load_dotenv()
 
 def main(argv):
     period = 10
-    pair="BTC_ETH"
+    pair = "BTC_ETH"
     prices = []
+    currentMovingAverage = 0;
     lengthOfMA = 0
-    currentMovingAverage = 0
+    startTime = False
+    endTime = False
+    historicalData = False
+    tradePlaced = False
+    typeOfTrade = False
+    dataDate = ""
+    orderNumber = ""
+    KEY = os.getenv("POLONIEX_KEY")
+    SECRET = os.getenv("POLONIEX_SECRET")
+    conn = Poloniex(KEY, SECRET)
 
     try:
-        opts, args = getopt.getopt(argv, "hp:c:n:", ["period=","currency=", "points="])
+        opts, args = getopt.getopt(argv,"hp:c:n:s:e:",["period=","currency=","points="])
     except getopt.GetoptError:
-        print('main.py -p <period> -c <currency pair> -n <period of moving average>')
+        print('main.py -p <period length> -c <currency pair> -n <period of moving average>')
         sys.exit(2)
 
     for opt, arg in opts:
         if opt == '-h':
-            print("main.py -p <period> -c <currency pair>")
+            print('main.py -p <period length> -c <currency pair> -n <period of moving average>')
             sys.exit()
         elif opt in ("-p", "--period"):
-            if int(arg) in [10, 300, 900, 1800, 7200, 14400, 86400]:
+            if (int(arg) in [300,900,1800,7200,14400,86400]):
                 period = arg
             else:
-                print("Poloniex requires periods in 300, 900, 1800, 7200, 14400, 86400")
+                print('Poloniex requires periods in 300,900,1800,7200,14400, or 86400 second increments')
                 sys.exit(2)
         elif opt in ("-c", "--currency"):
             pair = arg
         elif opt in ("-n", "--points"):
             lengthOfMA = int(arg)
-    KEY = os.getenv("POLONIEX_KEY")
-    SECRET = os.getenv("POLONIEX_SECRET")
-    conn = Poloniex(KEY, SECRET)
+        elif opt in ("-s"):
+            startTime = arg
+        elif opt in ("-e"):
+            endTime = arg
+
+    
+
+    if (startTime):
+        historicalData = conn.returnChartData(pair, period, startTime, endTime)
+        print(historicalData)
 
     while True:
-        currentValues = conn.returnTicker()
-        lastPairPrice = currentValues[pair]["last"]
+        if (startTime and historicalData):
+            nextDataPoint = historicalData.pop(0)
+            lastPairPrice = nextDataPoint['weightedAverage']
+            dataDate = datetime.datetime.fromtimestamp(int(nextDataPoint['date'])).strftime('%Y-%m-%d %H:%M:%S')
+        elif(startTime and not historicalData):
+            exit()
+        else:
+            currentValues = conn.returnTicker()
+            lastPairPrice = currentValues[pair]["last"]
+            dataDate = datetime.datetime.now()
 
-        if len(prices) > 0:
+        if (len(prices) > 0):
             currentMovingAverage = sum(prices) / float(len(prices))
+            previousPrice = prices[-1]
+            if (not tradePlaced):
+                if ( (lastPairPrice > currentMovingAverage) and (lastPairPrice < previousPrice) ):
+                    print("SELL ORDER")
+                    # orderNumber = conn.sell(pair,lastPairPrice,.01)
+                    tradePlaced = True
+                    typeOfTrade = "short"
+                elif ( (lastPairPrice < currentMovingAverage) and (lastPairPrice > previousPrice) ):
+                    print("BUY ORDER")
+                    # orderNumber = conn.buy(pair,lastPairPrice,.01)
+                    tradePlaced = True
+                    typeOfTrade = "long"
+            elif (typeOfTrade == "short"):
+                if ( lastPairPrice < currentMovingAverage ):
+                    print("EXIT TRADE")
+                    # conn.cancel(pair,orderNumber)
+                    tradePlaced = False
+                    typeOfTrade = False
+            elif (typeOfTrade == "long"):
+                if ( lastPairPrice > currentMovingAverage ):
+                    print("EXIT TRADE")
+                    # conn.cancel(pair,orderNumber)
+                    tradePlaced = False
+                    typeOfTrade = False
+        else:
+            previousPrice = 0
 
+        print("%s Period: %ss %s: %s Moving Average: %s" % (dataDate,period,pair,lastPairPrice,currentMovingAverage))
 
-        print("{:%Y-%m-%d %H:%M:%S}".format(datetime.datetime.now()) + " Period " + period + "s" + " Pair: " + pair + " Last pair price: " + str(lastPairPrice) + " Curr moving avg: " + str(currentMovingAverage) )
         prices.append(float(lastPairPrice))
-        # prices = prices[-lengthOfMA]
-        time.sleep(int(period))
+        prices = prices[-lengthOfMA:]
+        if (not startTime):
+            time.sleep(int(period))
+
 
 if __name__ == "__main__":
     main(sys.argv[1:])
